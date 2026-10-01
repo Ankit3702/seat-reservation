@@ -1,0 +1,13 @@
+target/
+*.class
+*.jar
+*.db
+*.db-wal
+*.db-shm
+*.mv.db
+*.trace.db
+seats*.db
+.idea/
+.vscode/
+*.iml
+.DS_Store

@@ -20,22 +20,34 @@ HOT_SEAT = opt("--hot-seat", "A12")
 HOT_N = int(opt("--hot-n", "500"))
 SEATS_N = 100
 
+transport_retries = 0
+
 def req(method, path, body=None, user="u", key=None):
+    """Real HTTP answers (2xx/4xx/5xx) are returned as-is and NEVER retried.
+    Only transport failures (connection reset/timeout, i.e. buyer redialling)
+    are retried, reusing the same idempotency key so exactly-once still holds."""
+    global transport_retries
     data = json.dumps(body).encode() if body is not None else None
-    r = urllib.request.Request(BASE + path, data=data, method=method,
-        headers={"Content-Type": "application/json",
-                 "Authorization": f"Bearer {user}",
-                 **({"X-Idempotency-Key": key} if key else {})})
-    try:
-        with urllib.request.urlopen(r, timeout=60) as resp:
-            return resp.status, json.loads(resp.read().decode() or "{}"), \
-                resp.headers.get("X-Idempotent-Replay") == "true"
-    except urllib.error.HTTPError as e:
-        try: b = json.loads(e.read().decode() or "{}")
-        except Exception: b = {}
-        return e.code, b, e.headers.get("X-Idempotent-Replay") == "true"
-    except Exception as e:
-        return 599, {"error": str(e)}, False
+    last = (599, {"error": "no attempt"}, False)
+    for attempt in range(3):
+        r = urllib.request.Request(BASE + path, data=data, method=method,
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {user}",
+                     **({"X-Idempotency-Key": key} if key else {})})
+        try:
+            with urllib.request.urlopen(r, timeout=120) as resp:
+                return resp.status, json.loads(resp.read().decode() or "{}"), \
+                    resp.headers.get("X-Idempotent-Replay") == "true"
+        except urllib.error.HTTPError as e:
+            try: b = json.loads(e.read().decode() or "{}")
+            except Exception: b = {}
+            return e.code, b, e.headers.get("X-Idempotent-Replay") == "true"
+        except Exception as e:
+            last = (599, {"error": str(e)}, False)
+            with lock:
+                transport_retries += 1
+            time.sleep(1 + attempt * 2)
+    return last
 
 print(f"BASE={BASE} total={TOTAL} hot={HOT_SEAT}x{HOT_N}", flush=True)
 st, show, _ = req("POST", "/shows", {"name": "friday-night",
@@ -105,6 +117,7 @@ dt = time.time() - t0
 st, state, _ = req("GET", f"/shows/{SID}", user="admin")
 inv = state.get("available", -1) + state.get("held", -1) + state.get("confirmed", -1)
 print(json.dumps({"seconds": round(dt, 1), "outcomes": outcomes,
+    "transport_retries": transport_retries,
     "state": {k: state.get(k) for k in ("total_seats", "available", "held", "confirmed")},
     "invariant_sum": inv, "invariant_ok": inv == state.get("total_seats"),
     "metrics_hint": f"{BASE}/metrics"}, indent=2))

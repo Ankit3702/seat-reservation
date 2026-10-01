@@ -10,4 +10,6 @@ WORKDIR /srv
 COPY --from=build /build/target/seat-reservation-1.0.0.jar app.jar
 ENV DB_PATH=/tmp/seats PORT=8000
 EXPOSE 8000
-CMD ["sh","-c","java -Xms256m -Xmx512m -jar app.jar"]
+# Small heap + SerialGC: free tier is 512MB total; 200 Tomcat threads at 1MB
+# stacks each plus a 512m heap OOM-kills the container under burst.
+CMD ["sh","-c","java -Xms128m -Xmx300m -XX:MaxMetaspaceSize=160m -XX:+UseSerialGC -jar app.jar"]

@@ -23,7 +23,7 @@ public class DataConfig {
     public DataSource dataSource(@Value("${app.db-path:/tmp/seats}") String dbPath) {
         DriverManagerDataSource ds = new DriverManagerDataSource();
         ds.setDriverClassName("org.h2.Driver");
-        ds.setUrl("jdbc:h2:file:" + dbPath + ";AUTO_SERVER=FALSE;LOCK_TIMEOUT=30000;CACHE_SIZE=65536");
+        ds.setUrl("jdbc:h2:file:" + dbPath + ";AUTO_SERVER=FALSE;LOCK_TIMEOUT=60000;CACHE_SIZE=131072;DB_CLOSE_DELAY=-1");
         ds.setUsername("sa");
         ds.setPassword("");
         return ds;
@@ -39,7 +39,7 @@ public class DataConfig {
         DataSourceTransactionManager tm = new DataSourceTransactionManager(ds);
         TransactionTemplate t = new TransactionTemplate(tm);
         t.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
-        t.setTimeout(15);
+        t.setTimeout(120);
         return t;
     }
 

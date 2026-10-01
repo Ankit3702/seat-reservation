@@ -36,6 +36,8 @@ public class ReservationService {
     private final MetricsRegistry metrics;
     private final ObjectMapper om = new ObjectMapper();
     private final ConcurrentHashMap<String, Object> showLocks = new ConcurrentHashMap<>();
+    /** Shows are immutable after creation: cache (price, limit) to skip one DB hit per reserve. */
+    private final ConcurrentHashMap<String, long[]> showCache = new ConcurrentHashMap<>();
 
     public ReservationService(JdbcTemplate jdbc, TransactionTemplate tx, MetricsRegistry metrics) {
         this.jdbc = jdbc; this.tx = tx; this.metrics = metrics;
@@ -62,6 +64,7 @@ public class ReservationService {
             for (String seat : seats) batch.add(new Object[]{id, seat});
             jdbc.batchUpdate("INSERT INTO seats(show_id,seat_no,status) VALUES(?,?,'available')", batch);
         });
+        showCache.put(id, new long[]{pricePaise, limit});
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("id", id); out.put("name", name); out.put("price_paise", pricePaise);
         out.put("per_user_limit", limit); out.put("total_seats", seats.size());
@@ -145,15 +148,21 @@ public class ReservationService {
                     }
                 }
 
-                Map<String, Object> show;
-                try {
-                    show = jdbc.queryForMap("SELECT price_paise, per_user_limit FROM shows WHERE id=?", showId);
-                } catch (EmptyResultDataAccessException e) {
-                    metrics.incDeclined("not-found");
-                    return new ReserveOutcome(404, Map.of("error", "show not found"), false);
+                long[] cached = showCache.get(showId);
+                long price; int limit;
+                if (cached != null) { price = cached[0]; limit = (int) cached[1]; }
+                else {
+                    Map<String, Object> show;
+                    try {
+                        show = jdbc.queryForMap("SELECT price_paise, per_user_limit FROM shows WHERE id=?", showId);
+                    } catch (EmptyResultDataAccessException e) {
+                        metrics.incDeclined("not-found");
+                        return new ReserveOutcome(404, Map.of("error", "show not found"), false);
+                    }
+                    price = ((Number) show.get("PRICE_PAISE")).longValue();
+                    limit = ((Number) show.get("PER_USER_LIMIT")).intValue();
+                    showCache.putIfAbsent(showId, new long[]{price, limit});
                 }
-                long price = ((Number) show.get("PRICE_PAISE")).longValue();
-                int limit = ((Number) show.get("PER_USER_LIMIT")).intValue();
 
                 Long heldN = jdbc.queryForObject(
                     "SELECT COUNT(*) FROM seats WHERE show_id=? AND holder_user_id=? AND status IN ('held','confirmed')",

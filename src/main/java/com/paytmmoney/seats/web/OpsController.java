@@ -6,6 +6,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -21,9 +22,11 @@ public class OpsController {
     private final JdbcTemplate jdbc;
     private final MetricsRegistry metrics;
     private final ReservationService svc;
+    private final RequestLogBuffer logs;
 
-    public OpsController(JdbcTemplate jdbc, MetricsRegistry metrics, ReservationService svc) {
-        this.jdbc = jdbc; this.metrics = metrics; this.svc = svc;
+    public OpsController(JdbcTemplate jdbc, MetricsRegistry metrics, ReservationService svc,
+                         RequestLogBuffer logs) {
+        this.jdbc = jdbc; this.metrics = metrics; this.svc = svc; this.logs = logs;
     }
 
     @GetMapping("/")
@@ -44,6 +47,11 @@ public class OpsController {
             if (one != null && one == 1) return ResponseEntity.ok(Map.of("ready", true));
         } catch (Exception ignored) {}
         return ResponseEntity.status(503).body(Map.of("ready", false));
+    }
+
+    @GetMapping("/logs")
+    public Map<String, Object> logs(@RequestParam(value = "limit", defaultValue = "200") int limit) {
+        return Map.of("lines", logs.last(limit));
     }
 
     @GetMapping(value = "/metrics", produces = MediaType.TEXT_PLAIN_VALUE)

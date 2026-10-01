@@ -29,9 +29,10 @@ curl -s localhost:8000/shows/<id>/reserve -H 'Content-Type: application/json' \
 # cancel (owner only)
 curl -s -XPOST localhost:8000/reservations/<rid>/cancel -H 'Authorization: Bearer user-1'
 
-# state, health, metrics
+# state, health, metrics, recent logs
 curl -s localhost:8000/shows/<id> | head -c 400
 curl -s localhost:8000/healthz; curl -s localhost:8000/readyz; curl -s localhost:8000/metrics
+curl -s "localhost:8000/logs?limit=5"
 ```
 
 Multi-seat is **all-or-nothing**: `["A12","A13"]` with one taken → whole request `409`, nothing held.

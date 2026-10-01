@@ -24,6 +24,11 @@ public class RequestIdFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger("seats");
     public static final String REQ_ID = "requestId";
     private final ObjectMapper om = new ObjectMapper();
+    private final RequestLogBuffer buffer;
+
+    public RequestIdFilter(RequestLogBuffer buffer) {
+        this.buffer = buffer;
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
@@ -44,7 +49,11 @@ public class RequestIdFilter extends OncePerRequestFilter {
             m.put("path", req.getRequestURI());
             m.put("status", res.getStatus());
             m.put("latency_ms", System.currentTimeMillis() - t0);
-            try { log.info(om.writeValueAsString(m)); } catch (Exception ignored) {}
+            try {
+                String line = om.writeValueAsString(m);
+                log.info(line);
+                buffer.add(line);
+            } catch (Exception ignored) {}
             res.setHeader("X-Request-Id", rid);
         }
     }

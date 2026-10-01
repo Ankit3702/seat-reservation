@@ -20,10 +20,17 @@ import javax.sql.DataSource;
 public class DataConfig {
 
     @Bean
-    public DataSource dataSource(@Value("${app.db-path:/tmp/seats}") String dbPath) {
+    public DataSource dataSource(@Value("${app.db-path:mem:seats}") String dbPath) {
         DriverManagerDataSource ds = new DriverManagerDataSource();
         ds.setDriverClassName("org.h2.Driver");
-        ds.setUrl("jdbc:h2:file:" + dbPath + ";AUTO_SERVER=FALSE;LOCK_TIMEOUT=60000;CACHE_SIZE=131072;DB_CLOSE_DELAY=-1");
+        if (dbPath.startsWith("mem:")) {
+            // In-memory: no fsync per commit (~100x faster on network disks).
+            // Safe on free tiers where the filesystem is ephemeral anyway;
+            // use a file path (or Postgres) where durability is required.
+            ds.setUrl("jdbc:h2:mem:seats;DB_CLOSE_DELAY=-1;LOCK_TIMEOUT=60000;CACHE_SIZE=131072");
+        } else {
+            ds.setUrl("jdbc:h2:file:" + dbPath + ";AUTO_SERVER=FALSE;LOCK_TIMEOUT=60000;CACHE_SIZE=131072;DB_CLOSE_DELAY=-1");
+        }
         ds.setUsername("sa");
         ds.setPassword("");
         return ds;

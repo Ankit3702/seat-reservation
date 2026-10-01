@@ -49,8 +49,9 @@ per-user-limit probe, prints `confirmed / declined-by-reason / 5xx` and the
 
 ## Deploy
 
-Public URL: **(fill after Render/Railway deploy)** — cold-start safe (`/healthz`),
-single container, `DB_PATH=/tmp/seats`, `PORT` respected. See `render.yaml`.
+Public URL: **https://seat-reservation-f2a5.onrender.com** — cold-start safe (`/healthz`),
+single container, in-memory H2 (`DB_PATH=mem:seats`), `PORT` respected. See `render.yaml`.
+Note: free-tier instances sleep when idle; first request can take ~50s (cold start).
 
 ## Docs
 

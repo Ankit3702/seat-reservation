@@ -28,16 +28,17 @@ def req(method, path, body=None, user="u", key=None):
                  **({"X-Idempotency-Key": key} if key else {})})
     try:
         with urllib.request.urlopen(r, timeout=60) as resp:
-            return resp.status, json.loads(resp.read().decode() or "{}")
+            return resp.status, json.loads(resp.read().decode() or "{}"), \
+                resp.headers.get("X-Idempotent-Replay") == "true"
     except urllib.error.HTTPError as e:
         try: b = json.loads(e.read().decode() or "{}")
         except Exception: b = {}
-        return e.code, b
+        return e.code, b, e.headers.get("X-Idempotent-Replay") == "true"
     except Exception as e:
-        return 599, {"error": str(e)}
+        return 599, {"error": str(e)}, False
 
 print(f"BASE={BASE} total={TOTAL} hot={HOT_SEAT}x{HOT_N}", flush=True)
-st, show = req("POST", "/shows", {"name": "friday-night",
+st, show, _ = req("POST", "/shows", {"name": "friday-night",
     "seats": [f"A{i}" for i in range(1, SEATS_N + 1)], "price_paise": 25000, "per_user_limit": 4},
     user="admin", key="burst-" + uuid.uuid4().hex[:8])
 assert st == 201, (st, show)
@@ -49,14 +50,14 @@ outcomes = {"confirmed": 0, "seat-taken": 0, "per-user-limit": 0, "replay": 0,
 first_key = {}  # user -> (key, seats) for retry test
 lock = __import__("threading").Lock()
 
-def tally(code, body, retried=False):
+def tally(code, body, replayed=False):
     with lock:
-        if code == 201: outcomes["confirmed"] += 1
+        if replayed: outcomes["replay"] += 1
+        elif code == 201: outcomes["confirmed"] += 1
         elif code == 599 or code >= 500: outcomes["5xx"] += 1
         else:
             err = str(body.get("error", ""))
-            if retried and code in (200, 201): outcomes["replay"] += 1
-            elif "taken" in err: outcomes["seat-taken"] += 1
+            if "taken" in err: outcomes["seat-taken"] += 1
             elif "limit" in err: outcomes["per-user-limit"] += 1
             elif "conflict" in err or "in use" in err: outcomes["same-key-different-body"] += 1
             else: outcomes["other-4xx"] += 1
@@ -65,15 +66,15 @@ def one_hot(i):
     user = f"hotuser-{i}"
     key = "hot-" + uuid.uuid4().hex[:12]
     if i < 30: first_key[user] = (key, [HOT_SEAT])
-    c, b = req("POST", f"/shows/{SID}/reserve", {"seats": [HOT_SEAT], "idempotency_key": key}, user, key)
-    tally(c, b)
+    c, b, rpl = req("POST", f"/shows/{SID}/reserve", {"seats": [HOT_SEAT], "idempotency_key": key}, user, key)
+    tally(c, b, rpl)
 
 def one_rand(i):
     user = f"buyer-{i % 400}"
     seats = random.sample([f"A{i}" for i in range(1, SEATS_N + 1)], random.choice([1, 2]))
     key = "r-" + uuid.uuid4().hex[:12]
-    c, b = req("POST", f"/shows/{SID}/reserve", {"seats": seats, "idempotency_key": key}, user, key)
-    tally(c, b)
+    c, b, rpl = req("POST", f"/shows/{SID}/reserve", {"seats": seats, "idempotency_key": key}, user, key)
+    tally(c, b, rpl)
 
 t0 = time.time()
 with ThreadPoolExecutor(max_workers=200) as ex:
@@ -82,26 +83,26 @@ with ThreadPoolExecutor(max_workers=200) as ex:
 # idempotent retries: same key + same body -> must not create extra
 def one_retry(item):
     user, (key, seats) = item
-    c, b = req("POST", f"/shows/{SID}/reserve", {"seats": seats, "idempotency_key": key}, user, key)
-    tally(c, b, retried=True)
+    c, b, rpl = req("POST", f"/shows/{SID}/reserve", {"seats": seats, "idempotency_key": key}, user, key)
+    tally(c, b, rpl)
 with ThreadPoolExecutor(max_workers=30) as ex:
     list(ex.map(one_retry, list(first_key.items())[:30]))
 # same key different body -> 409
-c, b = req("POST", f"/shows/{SID}/reserve", {"seats": ["A99"], "idempotency_key": list(first_key.values())[0][0]},
+c, b, rpl = req("POST", f"/shows/{SID}/reserve", {"seats": ["A99"], "idempotency_key": list(first_key.values())[0][0]},
            list(first_key.keys())[0], list(first_key.values())[0][0])
-tally(c, b)
+tally(c, b, rpl)
 # per-user limit probe: one user fires 10 parallel single-seat reserves, must end <= 4
 lim_user = "limit-probe-" + uuid.uuid4().hex[:6]
 def one_lim(i):
     k = "lim-" + uuid.uuid4().hex[:10]
     seat = f"A{(i % SEATS_N) + 1}"
-    c, b = req("POST", f"/shows/{SID}/reserve", {"seats": [seat], "idempotency_key": k}, lim_user, k)
+    c, b, rpl = req("POST", f"/shows/{SID}/reserve", {"seats": [seat], "idempotency_key": k}, lim_user, k)
     return c, b
 with ThreadPoolExecutor(max_workers=10) as ex:
     list(ex.map(one_lim, range(10)))
 dt = time.time() - t0
 
-st, state = req("GET", f"/shows/{SID}", user="admin")
+st, state, _ = req("GET", f"/shows/{SID}", user="admin")
 inv = state.get("available", -1) + state.get("held", -1) + state.get("confirmed", -1)
 print(json.dumps({"seconds": round(dt, 1), "outcomes": outcomes,
     "state": {k: state.get(k) for k in ("total_seats", "available", "held", "confirmed")},
